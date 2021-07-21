@@ -53,44 +53,17 @@ Note that that owner/admin can customize global fuel requirements and flying spe
 You *could* set "Require Fuel to Operate : " to false, but it is recommended that you leave this setting true and use the flyingpiano.unlimited permission instead if you want to remove the fuel requirement.
 
 ## Flight School
-1. Type /fp to spawn a piano.
-2. Set a code on the lock.  Unlock after setting the code.
-2. Add low-grade fuel to the lantern (if running in default mode).
-3. Sit in the piano.
-4. Aim at the lantern and press 'E' to take off!
-5. From here on use, WASD, Shift (sprint), spacebar (up), and Ctrl (down) to fly.
-6. When ready to land, point at the lantern and press E again.
-7. Once on the ground, use the spacebar to dismount.
-8. Lock the piano using the code lock to prevent others from using it.
-9. Use /fpd while standing next to the piano to destroy it.
-## Localization
-English/default language:
-```json
-{
-  "helptext1": "Flying Piano instructions:",
-  "helptext2": "  type /fp to spawn a Flying Piano",
-  "helptext3": "  type /fpd to destroy your flyingpiano.",
-  "helptext4": "  type /fpc to show a count of your pianos",
-  "notauthorized": "You don't have permission to do that !!",
-  "notfound": "Could not locate a piano.  You must be within {0} meters for this!!",
-  "notflyingpiano": "You are not piloting a flying piano !!",
-  "maxpianos": "You have reached the maximum allowed pianos",
-  "landingpiano": "Piano landing sequence started !!",
-  "risingpiano": "Piano takeoff sequence started !!",
-  "pianolocked": "You must unlock the Piano first !!",
-  "pianospawned": "Flying Piano spawned!  Don't forget to lock it !!",
-  "pianodestroyed": "Flying Piano destroyed !!",
-  "pianofuel": "You will need fuel to fly.  Do not start without fuel !!",
-  "pianonofuel": "You have been granted unlimited fly time, no fuel required !!",
-  "nofuel": "You're out of fuel !!",
-  "noplayer": "Unable to find player {0}!",
-  "gaveplayer": "Gave piano to player {0}!",
-  "lowfuel": "You're low on fuel !!",
-  "nopianos": "You have no Pianos",
-  "currpianos": "Current Pianos : {0}",
-  "giveusage": "You need to supply a valid SteamId."
-}
-```
+ 1. Type /fp to spawn a piano.
+ 2. Set a code on the lock.  Unlock after setting the code.
+ 3. Add low-grade fuel to the lantern (if running in default mode).
+ 4. Sit in the piano.
+ 5. Aim at the lantern and press 'E' to take off!
+ 6. From here on use, WASD, Shift (sprint), spacebar (up), and Ctrl (down) to fly.
+ 7. When ready to land, point at the lantern and press E again.
+ 8. Once on the ground, use the spacebar to dismount.
+ 9. Lock the piano using the code lock to prevent others from using it.
+10. Use /fpd while standing next to the piano to destroy it.
+
 ## Known Issues
 1. Lantern can be started or stopped by another player, which can cause the lantern cycle to be out of sync (off while flying).
 
