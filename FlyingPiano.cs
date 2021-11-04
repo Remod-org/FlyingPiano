@@ -29,7 +29,7 @@ using Oxide.Core.Plugins;
 
 namespace Oxide.Plugins
 {
-    [Info("FlyingPiano", "RFC1920", "1.0.1")]
+    [Info("FlyingPiano", "RFC1920", "1.0.2")]
     [Description("Fly a piano!")]
     // Thanks to Colon Blow for his fine work on GyroCopter, upon which this was originally based.
     internal class FlyingPiano : RustPlugin
