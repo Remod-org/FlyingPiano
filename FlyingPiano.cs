@@ -15,7 +15,6 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRA
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 #endregion License Information (MIT)
-//#define DEBUG
 using Oxide.Core;
 using System;
 using System.Collections;
@@ -26,24 +25,27 @@ using System.Linq;
 using Oxide.Core.Libraries.Covalence;
 using System.Globalization;
 using Oxide.Core.Plugins;
+using Newtonsoft.Json;
 
 namespace Oxide.Plugins
 {
-    [Info("FlyingPiano", "RFC1920", "1.0.2")]
+    [Info("FlyingPiano", "RFC1920", "1.0.3")]
     [Description("Fly a piano!")]
     // Thanks to Colon Blow for his fine work on GyroCopter, upon which this was originally based.
     internal class FlyingPiano : RustPlugin
     {
         #region Load
-        private static LayerMask layerMask;
-        private static LayerMask buildingMask;
-        private static LayerMask strongerMask;
-//        BaseEntity newPiano;
+        private ConfigData configData;
+        private static LayerMask layerMask = LayerMask.GetMask("Construction", "Prevent Building", "Deployed", "Terrain", "Water");//, "World");
+        //buildingMask = LayerMask.GetMask("Construction", "Prevent Building", "Deployed");//, "World");
+        private static LayerMask buildingMask = LayerMask.GetMask("Construction", "Prevent Building", "Deployed", "World", "Terrain", "Tree", "Invisible", "Default");
+        private static LayerMask strongerMask = LayerMask.GetMask("Construction", "Prevent Building", "Deployed", "World", "Default");
 
         private static Dictionary<ulong, PlayerPianoData> pianoplayer = new Dictionary<ulong, PlayerPianoData>();
         private static List<ulong> pilotslist = new List<ulong>();
 
-        // SignArtist plugin
+        public static FlyingPiano Instance;
+
         [PluginReference]
         private readonly Plugin SignArtist;
 
@@ -55,11 +57,7 @@ namespace Oxide.Plugins
 
         private void Init()
         {
-            LoadVariables();
-            layerMask = LayerMask.GetMask("Construction", "Prevent Building", "Deployed", "Terrain", "Water");//, "World");
-            //buildingMask = LayerMask.GetMask("Construction", "Prevent Building", "Deployed");//, "World");
-            buildingMask = LayerMask.GetMask("Construction", "Prevent Building", "Deployed", "World", "Terrain", "Tree", "Invisible", "Default");
-            strongerMask = LayerMask.GetMask("Construction", "Prevent Building", "Deployed", "World", "Default");
+            LoadConfigVariables();
 
             AddCovalenceCommand("fp", "cmdPianoBuild");
             AddCovalenceCommand("fpc", "cmdPianoCount");
@@ -72,6 +70,11 @@ namespace Oxide.Plugins
             permission.RegisterPermission("flyingpiano.admin", this);
             permission.RegisterPermission("flyingpiano.unlimited", this);
 
+            Instance = this;
+        }
+
+        protected override void LoadDefaultMessages()
+        {
             lang.RegisterMessages(new Dictionary<string, string>
             {
                 ["helptext1"] = "Flying Piano instructions:",
@@ -105,123 +108,116 @@ namespace Oxide.Plugins
 
         private static HashSet<BasePlayer> FindPlayers(string nameOrIdOrIp)
         {
-            var players = new HashSet<BasePlayer>();
+            HashSet<BasePlayer> players = new HashSet<BasePlayer>();
             if (string.IsNullOrEmpty(nameOrIdOrIp)) return players;
-            foreach (var activePlayer in BasePlayer.activePlayerList)
+            foreach (BasePlayer activePlayer in BasePlayer.activePlayerList)
             {
                 if (activePlayer.UserIDString.Equals(nameOrIdOrIp))
+                {
                     players.Add(activePlayer);
+                }
                 else if (!string.IsNullOrEmpty(activePlayer.displayName) && activePlayer.displayName.Contains(nameOrIdOrIp, CompareOptions.IgnoreCase))
+                {
                     players.Add(activePlayer);
+                }
                 else if (activePlayer.net?.connection != null && activePlayer.net.connection.ipaddress.Equals(nameOrIdOrIp))
+                {
                     players.Add(activePlayer);
+                }
             }
-            foreach (var sleepingPlayer in BasePlayer.sleepingPlayerList)
+            foreach (BasePlayer sleepingPlayer in BasePlayer.sleepingPlayerList)
             {
                 if (sleepingPlayer.UserIDString.Equals(nameOrIdOrIp))
+                {
                     players.Add(sleepingPlayer);
+                }
                 else if (!string.IsNullOrEmpty(sleepingPlayer.displayName) && sleepingPlayer.displayName.Contains(nameOrIdOrIp, CompareOptions.IgnoreCase))
+                {
                     players.Add(sleepingPlayer);
+                }
             }
             return players;
         }
         #endregion
 
         #region Configuration
-        private bool UseMaxPianoChecks = true;
-        private bool playemptysound = true;
-        public int maxpianos = 1;
-        public int vipmaxpianos = 2;
-
-        private static float MinAltitude = 2f;
-        private static float MinDistance = 10f;
-
-        private static float NormalSpeed = 12f;
-        private static float SprintSpeed = 25f;
-        private static bool requirefuel = true;
-        private static bool doublefuel = false;
-
-        //bool Changed = false;
-
         protected override void LoadDefaultConfig()
         {
-#if DEBUG
-            Puts("Creating a new config file...");
-#endif
-            Config.Clear();
-            LoadVariables();
+            Puts("Creating new config file.");
+            ConfigData config = new ConfigData
+            {
+                UseMaxPianoChecks = true,
+                DoubleFuel = false,
+                PlayEmptySound = false,
+                RequireFuel = true,
+                debug = false,
+                MaxPianos = 1,
+                VIPMaxPianos = 2,
+                MinDistance = 10,
+                MinAltitude = 5,
+                NormalSpeed = 12,
+                SprintSpeed = 25,
+                Version = Version
+            };
+            SaveConfig(config);
         }
 
         private void LoadConfigVariables()
         {
-            CheckCfgFloat("Minimum Flight Altitude : ", ref MinAltitude);
-            CheckCfgFloat("Minimum Distance for FPD: ", ref MinDistance);
-            CheckCfgFloat("Speed - Normal Flight Speed is : ", ref NormalSpeed);
-            CheckCfgFloat("Speed - Sprint Flight Speed is : ", ref SprintSpeed);
-
-            CheckCfg("Deploy - Enable limited FlyingPianos per person : ", ref UseMaxPianoChecks);
-            CheckCfg("Deploy - Limit of Pianos players can build : ", ref maxpianos);
-            CheckCfg("Deploy - Limit of Pianos VIP players can build : ", ref vipmaxpianos);
-            CheckCfg("Require Fuel to Operate : ", ref requirefuel);
-            CheckCfg("Play low fuel sound : ", ref playemptysound);
-            CheckCfg("Double Fuel Consumption: ", ref doublefuel);
+            configData = Config.ReadObject<ConfigData>();
+            configData.Version = Version;
+            SaveConfig(configData);
         }
 
-        private void LoadVariables()
+        private void SaveConfig(ConfigData config)
         {
-            LoadConfigVariables();
-            SaveConfig();
+            Config.WriteObject(config, true);
         }
 
-        private void CheckCfg<T>(string Key, ref T var)
+        private class ConfigData
         {
-            if (Config[Key] is T)
-            {
-                var = (T)Config[Key];
-            }
-            else
-            {
-                Config[Key] = var;
-            }
-        }
+            //public bool AllowDamage;
 
-        private void CheckCfgFloat(string Key, ref float var)
-        {
-            if (Config[Key] != null)
-            {
-                var = Convert.ToSingle(Config[Key]);
-            }
-            else
-            {
-                Config[Key] = var;
-            }
-        }
+            [JsonProperty(PropertyName = "Deploy - Enable limited FlyingPianos per person : ")]
+            public bool UseMaxPianoChecks;
 
-        private object GetConfig(string menu, string datavalue, object defaultValue)
-        {
-            var data = Config[menu] as Dictionary<string, object>;
-            if (data == null)
-            {
-                data = new Dictionary<string, object>();
-                Config[menu] = data;
-                //Changed = true;
-            }
+            [JsonProperty(PropertyName = "Double Fuel Consumption: ")]
+            public bool DoubleFuel;
 
-            object value;
-            if (!data.TryGetValue(datavalue, out value))
-            {
-                value = defaultValue;
-                data[datavalue] = value;
-                //Changed = true;
-            }
-            return value;
+            [JsonProperty(PropertyName = "Play low fuel sound : ")]
+            public bool PlayEmptySound;
+
+            [JsonProperty(PropertyName = "Require Fuel to Operate : ")]
+            public bool RequireFuel;
+
+            [JsonProperty(PropertyName = "Deploy - Limit of Pianos players can build : ")]
+            public int MaxPianos;
+
+            [JsonProperty(PropertyName = "Deploy - Limit of Pianos VIP players can build : ")]
+            public int VIPMaxPianos;
+
+            //public float InitialHealth;
+            [JsonProperty(PropertyName = "Minimum Distance for FPD: ")]
+            public float MinDistance;
+
+            [JsonProperty(PropertyName = "Minimum Flight Altitude : ")]
+            public float MinAltitude;
+
+            [JsonProperty(PropertyName = "Speed - Normal Flight Speed is : ")]
+            public float NormalSpeed;
+
+            [JsonProperty(PropertyName = "Speed - Sprint Flight Speed is : ")]
+            public float SprintSpeed;
+
+            public bool debug;
+            public VersionNumber Version;
         }
         #endregion
 
         #region Message
         private string _(string msgId, BasePlayer player, params object[] args)
         {
-            var msg = lang.GetMessage(msgId, this, player?.UserIDString);
+            string msg = lang.GetMessage(msgId, this, player?.UserIDString);
             return args.Length > 0 ? string.Format(msg, args) : msg;
         }
 
@@ -243,7 +239,7 @@ namespace Oxide.Plugins
         private void cmdPianoBuild(IPlayer iplayer, string command, string[] args)
         {
             bool vip = false;
-            var player = iplayer.Object as BasePlayer;
+            BasePlayer player = iplayer.Object as BasePlayer;
             if (!iplayer.HasPermission("flyingpiano.use")) { PrintMsgL(player, "notauthorized"); return; }
             if (iplayer.HasPermission("flyingpiano.vip"))
             {
@@ -256,7 +252,7 @@ namespace Oxide.Plugins
         [Command("fpg"), Permission("flyingpiano.admin")]
         private void cmdPianoGiveChat(IPlayer iplayer, string command, string[] args)
         {
-            var player = iplayer.Object as BasePlayer;
+            BasePlayer player = iplayer.Object as BasePlayer;
             if (args.Length == 0)
             {
                 PrintMsgL(player, "giveusage");
@@ -275,7 +271,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            var Iplayer = Bplayer.IPlayer;
+            IPlayer Iplayer = Bplayer.IPlayer;
             if (Iplayer.HasPermission("flyingpiano.vip"))
             {
                 vip = true;
@@ -315,7 +311,7 @@ namespace Oxide.Plugins
             BasePlayer Bplayer = BasePlayer.Find(pname);
             if (Bplayer == null) { Puts($"Unable to find player '{pname}'"); return; }
 
-            var Iplayer = Bplayer.IPlayer;
+            IPlayer Iplayer = Bplayer.IPlayer;
             if (Iplayer.HasPermission("flyingpiano.vip")) { vip = true; }
             if (PianoLimitReached(Bplayer, vip))
             {
@@ -328,7 +324,7 @@ namespace Oxide.Plugins
         [Command("fpc"), Permission("flyingpiano.use")]
         private void cmdPianoCount(IPlayer iplayer, string command, string[] args)
         {
-            var player = iplayer.Object as BasePlayer;
+            BasePlayer player = iplayer.Object as BasePlayer;
             if (!iplayer.HasPermission("flyingpiano.use")) { PrintMsgL(player, "notauthorized"); return; }
             if (!pianoplayer.ContainsKey(player.userID))
             {
@@ -336,16 +332,14 @@ namespace Oxide.Plugins
                 return;
             }
             string ccount = pianoplayer[player.userID].pianocount.ToString();
-#if DEBUG
-            Puts("PianoCount: " + ccount);
-#endif
+            if (configData.debug) Puts("PianoCount: " + ccount);
             PrintMsgL(player, "currpianos", ccount);
         }
 
         [Command("fpd"), Permission("flyingpiano.use")]
         private void cmdPianoDestroy(IPlayer iplayer, string command, string[] args)
         {
-            var player = iplayer.Object as BasePlayer;
+            BasePlayer player = iplayer.Object as BasePlayer;
             if (!iplayer.HasPermission("flyingpiano.use")) { PrintMsgL(player, "notauthorized"); return; }
 
             string target = null;
@@ -360,7 +354,7 @@ namespace Oxide.Plugins
                     DestroyAllPianos(player);
                     return;
                 }
-                var players = FindPlayers(target);
+                HashSet<BasePlayer> players = FindPlayers(target);
                 if (players.Count == 0)
                 {
                     PrintMsgL(player, "PlayerNotFound", target);
@@ -371,7 +365,7 @@ namespace Oxide.Plugins
                     PrintMsgL(player, "MultiplePlayers", target, string.Join(", ", players.Select(p => p.displayName).ToArray()));
                     return;
                 }
-                var targetPlayer = players.First();
+                BasePlayer targetPlayer = players.First();
                 RemovePiano(targetPlayer);
                 DestroyRemotePiano(targetPlayer);
             }
@@ -385,7 +379,7 @@ namespace Oxide.Plugins
         [Command("fphelp"), Permission("flyingpiano.use")]
         private void cmdPianoHelp(IPlayer iplayer, string command, string[] args)
         {
-            var player = iplayer.Object as BasePlayer;
+            BasePlayer player = iplayer.Object as BasePlayer;
             if (!iplayer.HasPermission("flyingpiano.use")) { PrintMsgL(player, "notauthorized"); return; }
             PrintMsgL(player, "helptext1");
             PrintMsgL(player, "helptext2");
@@ -421,9 +415,7 @@ namespace Oxide.Plugins
             if (!player.isMounted) return rtrn; // player offline, does not mean ismounted on piano
 
             if (player.GetMounted() != activepiano.entity) return rtrn; // online player not in seat on piano
-#if DEBUG
-            Puts("OnOvenToggle: Player cycled lantern!");
-#endif
+            if (configData.debug) Puts("OnOvenToggle: Player cycled lantern!");
             if (oven.IsOn())
             {
                 oven.StopCooking();
@@ -432,18 +424,20 @@ namespace Oxide.Plugins
             {
                 oven.StartCooking();
             }
-            if (!activepiano.FuelCheck())
+            if (!activepiano.FuelCheck() && activepiano.needfuel)
             {
-                if (activepiano.needfuel)
-                {
-                    PrintMsgL(player, "nofuel");
-                    PrintMsgL(player, "landingpiano");
-                    activepiano.engineon = false;
-                }
+                PrintMsgL(player, "nofuel");
+                PrintMsgL(player, "landingpiano");
+                activepiano.engineon = false;
             }
-            var ison = activepiano.engineon;
+            bool ison = activepiano.engineon;
             if (ison) { activepiano.islanding = true; PrintMsgL(player, "landingpiano"); return null; }
-            if (!ison) { AddPlayerToPilotsList(player); activepiano.engineon = true; return null; }
+            if (!ison)
+            {
+                AddPlayerToPilotsList(player);
+                activepiano.StartEngine();
+                return null;
+            }
 
             return rtrn;
         }
@@ -453,66 +447,53 @@ namespace Oxide.Plugins
         {
             // Only work on lanterns
             if (oven.ShortPrefabName != "lantern.deployed") return;
-            int dbl = doublefuel ? 4 : 2;
+            int dbl = configData.DoubleFuel ? 4 : 2;
 
             BaseEntity lantern = oven as BaseEntity;
             // Only work on lanterns attached to a Piano
-            var activepiano = lantern.GetComponentInParent<PianoEntity>() ?? null;
+            PianoEntity activepiano = lantern.GetComponentInParent<PianoEntity>() ?? null;
             if (activepiano == null) return;
-#if DEBUG
-            Puts("OnConsumeFuel: found a piano lantern!");
-#endif
+            if (configData.debug) Puts("OnConsumeFuel: found a piano lantern!");
             if (activepiano.needfuel)
             {
-#if DEBUG
-                Puts("OnConsumeFuel: piano requires fuel!");
-#endif
+                if (configData.debug) Puts("OnConsumeFuel: piano requires fuel!");
             }
             else
             {
-#if DEBUG
-                Puts("OnConsumeFuel: piano does not require fuel!");
-#endif
+                if (configData.debug) Puts("OnConsumeFuel: piano does not require fuel!");
                 fuel.amount++; // Required to keep it from decrementing
                 return;
             }
             BasePlayer player = activepiano.GetComponent<BaseMountable>().GetMounted() as BasePlayer;
             if (!player) return;
-#if DEBUG
-            Puts("OnConsumeFuel: checking fuel level...");
-#endif
-            // Before it drops to 1 (3 for doublefuel) AFTER this hook call is complete, warn them that the fuel is low (1) - ikr
+            if (configData.debug) Puts("OnConsumeFuel: checking fuel level...");
+            // Before it drops to 1 (3 for configData.DoubleFuel) AFTER this hook call is complete, warn them that the fuel is low (1) - ikr
             if (fuel.amount == dbl)
             {
-#if DEBUG
-                Puts("OnConsumeFuel: sending low fuel warning...");
-#endif
-                if (playemptysound)
+                if (configData.debug) Puts("OnConsumeFuel: sending low fuel warning...");
+                if (configData.PlayEmptySound)
                 {
                     Effect.server.Run("assets/bundled/prefabs/fx/well/pump_down.prefab", player.transform.position);
                 }
                 PrintMsgL(player, "lowfuel");
             }
 
-            if (doublefuel)
+            if (configData.DoubleFuel)
             {
                 fuel.amount--;
             }
 
             if (fuel.amount == 0)
             {
-#if DEBUG
-                Puts("OnConsumeFuel: out of fuel.");
-#endif
+                if (configData.debug) Puts("OnConsumeFuel: out of fuel.");
                 PrintMsgL(player, "lowfuel");
-                var ison = activepiano.engineon;
+                bool ison = activepiano.engineon;
                 if (ison)
                 {
                     activepiano.islanding = true;
                     activepiano.engineon = false;
                     PrintMsgL(player, "landingpiano");
                     OnOvenToggle(oven, player);
-                    return;
                 }
             }
         }
@@ -522,22 +503,16 @@ namespace Oxide.Plugins
         {
             // Only work on lanterns
             if (entity.ShortPrefabName != "lantern.deployed") return null;
-#if DEBUG
-            Puts("OnNightLanternToggle: Called on a lantern.  Checking for piano...");
-#endif
+            if (configData.debug) Puts("OnNightLanternToggle: Called on a lantern.  Checking for piano...");
 
             // Only work on lanterns attached to a Piano
-            var activepiano = entity.GetComponentInParent<PianoEntity>() ?? null;
+            PianoEntity activepiano = entity.GetComponentInParent<PianoEntity>() ?? null;
             if (activepiano != null)
             {
-#if DEBUG
-                Puts("OnNightLanternToggle: Do not cycle this lantern!");
-#endif
+                if (configData.debug) Puts("OnNightLanternToggle: Do not cycle this lantern!");
                 return true;
             }
-#if DEBUG
-            Puts("OnNightLanternToggle: Not a piano lantern.");
-#endif
+            if (configData.debug) Puts("OnNightLanternToggle: Not a piano lantern.");
             return null;
         }
         #endregion
@@ -558,14 +533,12 @@ namespace Oxide.Plugins
             Vector3 spawnpos = new Vector3();
 
             // Set initial default for fuel requirement based on config
-            bool needfuel = requirefuel;
+            bool needfuel = configData.RequireFuel;
             if (isAllowed(player, "flyingpiano.unlimited"))
             {
                 // User granted unlimited fly time without fuel
                 needfuel = false;
-#if DEBUG
-                Puts("AddPiano: Unlimited fuel granted!");
-#endif
+                if (configData.debug) Puts("AddPiano: Unlimited fuel granted!");
             }
 
             Vector3 rot = player.transform.rotation.eulerAngles;
@@ -582,23 +555,23 @@ namespace Oxide.Plugins
             }
 
             const string staticprefab = "assets/prefabs/instruments/piano/piano.deployed.prefab";
-            var newPiano = GameManager.server.CreateEntity(staticprefab, spawnpos, Quaternion.Euler(rot), true);
+            BaseEntity newPiano = GameManager.server.CreateEntity(staticprefab, spawnpos, Quaternion.Euler(rot), true);
             newPiano.name = "FlyingPiano";
-            var chairmount = newPiano.GetComponent<BaseMountable>();
+            UnityEngine.Object.Destroy(newPiano.GetComponent<DestroyOnGroundMissing>());
+            UnityEngine.Object.Destroy(newPiano.GetComponent<GroundWatch>());
+            BaseMountable chairmount = newPiano.GetComponent<BaseMountable>();
             chairmount.needsVehicleTick = true;
             newPiano.enableSaving = false;
             newPiano.OwnerID = player.userID;
             newPiano.Spawn();
-            var piano = newPiano.gameObject.AddComponent<PianoEntity>();
+            PianoEntity piano = newPiano.gameObject.AddComponent<PianoEntity>();
             piano.needfuel = needfuel;
             // Unlock the tank if they need fuel.
             piano.lantern1.SetFlag(BaseEntity.Flags.Locked, !needfuel);
             if (needfuel)
             {
-#if DEBUG
                 // We have to set this after the spawn.
-                Puts("AddPiano: Emptying the tank!");
-#endif
+                if (configData.debug) Puts("AddPiano: Emptying the tank!");
                 piano.SetFuel(0);
             }
 
@@ -616,11 +589,8 @@ namespace Oxide.Plugins
                     // Put them in the chair.  They will still need to unlock it.
                     PrintMsgL(player, "pianonofuel");
                     chairmount.MountPlayer(player);
-#if DEBUG
-                    Puts($"Mounted player: {chairmount._mounted.UserIDString}");
-#endif
+                    if (configData.debug) Puts($"Mounted player: {chairmount._mounted.UserIDString}");
                 }
-                return;
             }
         }
 
@@ -647,12 +617,12 @@ namespace Oxide.Plugins
         {
             if (player == null) return;
             List<BaseEntity> pianolist = new List<BaseEntity>();
-            Vis.Entities<BaseEntity>(player.transform.position, MinDistance, pianolist);
+            Vis.Entities<BaseEntity>(player.transform.position, configData.MinDistance, pianolist);
             bool foundpiano = false;
 
             foreach (BaseEntity p in pianolist)
             {
-                var foundent = p.GetComponentInParent<PianoEntity>() ?? null;
+                PianoEntity foundent = p.GetComponentInParent<PianoEntity>() ?? null;
                 if (foundent != null)
                 {
                     foundpiano = true;
@@ -663,19 +633,19 @@ namespace Oxide.Plugins
             }
             if (!foundpiano)
             {
-                PrintMsgL(player, "notfound", MinDistance.ToString());
+                PrintMsgL(player, "notfound", configData.MinDistance.ToString());
             }
         }
 
         private void DestroyAllPianos(BasePlayer player)
         {
             List<BaseEntity> pianolist = new List<BaseEntity>();
-            Vis.Entities<BaseEntity>(new Vector3(0,0,0), 3500f, pianolist);
+            Vis.Entities(new Vector3(0,0,0), 3500f, pianolist);
             bool foundpiano = false;
 
             foreach (BaseEntity p in pianolist)
             {
-                var foundent = p.GetComponentInParent<PianoEntity>() ?? null;
+                PianoEntity foundent = p.GetComponentInParent<PianoEntity>() ?? null;
                 if (foundent != null)
                 {
                     foundpiano = true;
@@ -685,7 +655,7 @@ namespace Oxide.Plugins
             }
             if (!foundpiano)
             {
-                PrintMsgL(player, "notfound", MinDistance.ToString());
+                PrintMsgL(player, "notfound", configData.MinDistance.ToString());
             }
         }
 
@@ -698,7 +668,7 @@ namespace Oxide.Plugins
 
             foreach (BaseEntity p in pianolist)
             {
-                var foundent = p.GetComponentInParent<PianoEntity>() ?? null;
+                PianoEntity foundent = p.GetComponentInParent<PianoEntity>() ?? null;
                 if (foundent != null)
                 {
                     foundpiano = true;
@@ -709,7 +679,7 @@ namespace Oxide.Plugins
             }
             if (!foundpiano)
             {
-                PrintMsgL(player, "notfound", MinDistance.ToString());
+                PrintMsgL(player, "notfound", configData.MinDistance.ToString());
             }
         }
 
@@ -717,7 +687,7 @@ namespace Oxide.Plugins
         {
             if (player == null || input == null) return;
             if (!player.isMounted) return;
-            var activepiano = player.GetMounted().GetComponentInParent<PianoEntity>() ?? null;
+            PianoEntity activepiano = player.GetMounted().GetComponentInParent<PianoEntity>() ?? null;
             if (activepiano == null) return;
             if (player.GetMounted() != activepiano.entity) return;
             if (input != null)
@@ -730,28 +700,28 @@ namespace Oxide.Plugins
         private void OnEntityTakeDamage(BaseCombatEntity entity, HitInfo hitInfo)
         {
             if (entity == null || hitInfo == null) return;
-            var ispiano = entity.GetComponentInParent<PianoEntity>() ?? null;
+            PianoEntity ispiano = entity.GetComponentInParent<PianoEntity>() ?? null;
             if (ispiano != null) hitInfo.damageTypes.ScaleAll(0);
         }
 
         private object OnEntityGroundMissing(BaseEntity entity)
         {
-            var ispiano = entity.GetComponentInParent<PianoEntity>() ?? null;
+            PianoEntity ispiano = entity.GetComponentInParent<PianoEntity>() ?? null;
             if (ispiano != null) return false;
             return null;
         }
 
         private bool PianoLimitReached(BasePlayer player, bool vip=false)
         {
-            if (UseMaxPianoChecks)
+            if (configData.UseMaxPianoChecks)
             {
                 if (pianoplayer.ContainsKey(player.userID))
                 {
-                    var currentcount = pianoplayer[player.userID].pianocount;
-                    int maxallowed = maxpianos;
+                    int currentcount = pianoplayer[player.userID].pianocount;
+                    int maxallowed = configData.MaxPianos;
                     if (vip)
                     {
-                        maxallowed = vipmaxpianos;
+                        maxallowed = configData.VIPMaxPianos;
                     }
                     if (currentcount >= maxallowed) return true;
                 }
@@ -788,16 +758,12 @@ namespace Oxide.Plugins
             Puts("CanDismountEntity!");
             if (player == null)
             {
-#if DEBUG
-                Puts("Player null!");
-#endif
+                if (configData.debug) Puts("Player null!");
                 return null;
             }
             if (PilotListContainsPlayer(player))
             {
-#if DEBUG
-                Puts("Unable to dismount!");
-#endif
+                if (configData.debug) Puts("Unable to dismount!");
                 return false;
             }
             return null;
@@ -805,12 +771,10 @@ namespace Oxide.Plugins
 
         private void OnEntityMounted(BaseMountable mountable, BasePlayer player)
         {
-            var activepiano = mountable.GetComponentInParent<PianoEntity>() ?? null;
+            PianoEntity activepiano = mountable.GetComponentInParent<PianoEntity>() ?? null;
             if (activepiano != null)
             {
-#if DEBUG
-                Puts("OnEntityMounted: player mounted copter!");
-#endif
+                if (configData.debug) Puts("OnEntityMounted: player mounted copter!");
                 if (mountable.GetComponent<BaseEntity>() != activepiano.entity) return;
                 activepiano.lantern1.SetFlag(BaseEntity.Flags.On, false);
             }
@@ -818,12 +782,10 @@ namespace Oxide.Plugins
 
         private void OnEntityDismounted(BaseMountable mountable, BasePlayer player)
         {
-            var activepiano = mountable.GetComponentInParent<PianoEntity>() ?? null;
+            PianoEntity activepiano = mountable.GetComponentInParent<PianoEntity>() ?? null;
             if (activepiano != null)
             {
-#if DEBUG
-                Puts("OnEntityMounted: player dismounted copter!");
-#endif
+                if (configData.debug) Puts("OnEntityMounted: player dismounted copter!");
                 if (mountable.GetComponent<BaseEntity>() != activepiano.entity) return;
             }
         }
@@ -831,7 +793,7 @@ namespace Oxide.Plugins
         private object CanLootEntity(BasePlayer player, StorageContainer container)
         {
             if (container == null || player == null) return null;
-            var ispiano = container.GetComponentInParent<PianoEntity>();
+            PianoEntity ispiano = container.GetComponentInParent<PianoEntity>();
             if (ispiano?.pianolock?.IsLocked() == true)
             {
                 return false;
@@ -853,17 +815,18 @@ namespace Oxide.Plugins
 
             if (myparent == "FlyingPiano" || myent.name == "FlyingPiano")
             {
-#if DEBUG
-                if (myent.name == "FlyingPiano")
+                if (configData.debug)
                 {
-                    Puts("CanPickupEntity: player trying to pickup the piano!");
+                    if (myent.name == "FlyingPiano")
+                    {
+                        Puts("CanPickupEntity: player trying to pickup the piano!");
+                    }
+                    else if (myparent == "FlyingPiano")
+                    {
+                        string entity_name = myent.LookupPrefab().name;
+                        Puts($"CanPickupEntity: player trying to remove {entity_name} from a piano!");
+                    }
                 }
-                else if (myparent == "FlyingPiano")
-                {
-                    string entity_name = myent.LookupPrefab().name;
-                    Puts($"CanPickupEntity: player trying to remove {entity_name} from a piano!");
-                }
-#endif
                 PrintMsgL(player, "notauthorized");
                 return false;
             }
@@ -884,9 +847,7 @@ namespace Oxide.Plugins
 
             if (myparent == "FlyingPiano")
             {
-#if DEBUG
-                Puts("CanPickupLock: player trying to remove lock from a piano!");
-#endif
+                if (configData.debug)Puts("CanPickupLock: player trying to remove lock from a piano!");
                 PrintMsgL(player, "notauthorized");
                 return false;
             }
@@ -935,10 +896,10 @@ namespace Oxide.Plugins
 
         private void DestroyAll<T>()
         {
-            var objects = UnityEngine.Object.FindObjectsOfType(typeof(T));
+            UnityEngine.Object[] objects = UnityEngine.Object.FindObjectsOfType(typeof(T));
             if (objects != null)
             {
-                foreach (var gameObj in objects)
+                foreach (UnityEngine.Object gameObj in objects)
                 {
                     UnityEngine.Object.Destroy(gameObj);
                 }
@@ -989,6 +950,7 @@ namespace Oxide.Plugins
             public bool engineon;
             public bool hasFuel;
             public bool needfuel;
+            private bool zmTrigger;
 
             public ulong skinid = 1;
             public ulong ownerid;
@@ -1009,7 +971,7 @@ namespace Oxide.Plugins
                 entity = GetComponentInParent<BaseEntity>();
                 entityrot = Quaternion.identity;
                 entitypos = entity.transform.position;
-                minaltitude = MinAltitude;
+                minaltitude = Instance.configData.MinAltitude;
                 instance = new FlyingPiano();
                 ownerid = entity.OwnerID;
                 gameObject.name = "FlyingPiano";
@@ -1031,8 +993,8 @@ namespace Oxide.Plugins
                 islanding = false;
                 mounted = false;
                 throttleup = false;
-                sprintspeed = SprintSpeed;
-                normalspeed = NormalSpeed;
+                sprintspeed = Instance.configData.SprintSpeed;
+                normalspeed = Instance.configData.NormalSpeed;
                 //isenabled = false;
                 SpawnPiano();
                 lantern1.OwnerID = entity.OwnerID;
@@ -1059,12 +1021,12 @@ namespace Oxide.Plugins
 
             private void SpawnRefresh(BaseEntity entity)
             {
-                var hasstab = entity.GetComponent<StabilityEntity>() ?? null;
+                StabilityEntity hasstab = entity.GetComponent<StabilityEntity>();
                 if (hasstab != null)
                 {
                     hasstab.grounded = true;
                 }
-                var hasmount = entity.GetComponent<BaseMountable>() ?? null;
+                BaseMountable hasmount = entity.GetComponent<BaseMountable>();
                 if (hasmount != null)
                 {
                     hasmount.needsVehicleTick = true;
@@ -1080,7 +1042,7 @@ namespace Oxide.Plugins
                 {
                     while (container1.itemList.Count > 0)
                     {
-                        var item = container1.itemList[0];
+                        Item item = container1.itemList[0];
                         item.RemoveFromContainer();
                         item.Remove(0f);
                     }
@@ -1116,19 +1078,27 @@ namespace Oxide.Plugins
 
             private void OnTriggerEnter(Collider col)
             {
-                var target = col.GetComponentInParent<BasePlayer>();
-                if (target != null)
+                if (col.gameObject.name == "ZoneManager")
                 {
-                    pianoantihack.Add(target);
+                    if (Instance.configData.debug) Instance.Puts("Entering ZoneManager zone.");
+                    zmTrigger = true;
+                }
+                else if (col.GetComponentInParent<BasePlayer>() != null)
+                {
+                    pianoantihack.Add(col.GetComponentInParent<BasePlayer>());
                 }
             }
 
             private void OnTriggerExit(Collider col)
             {
-                var target = col.GetComponentInParent<BasePlayer>();
-                if (target != null)
+                if (col.gameObject.name == "ZoneManager")
                 {
-                    pianoantihack.Remove(target);
+                    if (Instance.configData.debug) Instance.Puts("Exiting ZoneManager zone.");
+                    zmTrigger = false;
+                }
+                else if (col.GetComponentInParent<BasePlayer>() != null)
+                {
+                    pianoantihack.Remove(col.GetComponentInParent<BasePlayer>());
                 }
             }
 
@@ -1179,31 +1149,41 @@ namespace Oxide.Plugins
                 }
             }
 
+            public void StartEngine()
+            {
+                engineon = true;
+                zmTrigger = false;
+                sphereCollider.enabled = false;
+                if (Instance.configData.debug) Instance.Puts("sphereCollider disabled for engine start");
+                instance.timer.Once(2, EngineStarted);
+            }
+
+            private void EngineStarted()
+            {
+                sphereCollider.enabled = true;
+                if (Instance.configData.debug) Instance.Puts("sphereCollider enabled after engine start");
+            }
+
             private void Update()
             {
                 if (engineon)
                 {
                     if (!GetPilot()) islanding = true;
-                    var currentspeed = normalspeed;
+                    float currentspeed = normalspeed;
                     if (throttleup) { currentspeed = sprintspeed; }
                     RaycastHit hit;
 
                     // This is a little weird.  Fortunately, some of the hooks determine fuel status...
-                    if (!hasFuel)
+                    if (!hasFuel && needfuel)
                     {
-                        if (needfuel)
-                        {
-                            islanding = false;
-                            engineon = false;
-                            return;
-                        }
+                        islanding = false;
+                        engineon = false;
+                        return;
                     }
                     if (islanding)
                     {
                         // LANDING
-#if DEBUG
-                        Interface.Oxide.LogWarning($"Trying to land, current pos = {entity.transform.position}");
-#endif
+                        if (Instance.configData.debug) Interface.Oxide.LogWarning($"Trying to land, current pos = {entity.transform.position}");
                         if (!Physics.Raycast(new Ray(entity.transform.position, Vector3.down), out hit, 1.5f, layerMask))
                         {
                             // Drop fast, it's a piano
@@ -1217,16 +1197,12 @@ namespace Oxide.Plugins
                         if (Physics.Raycast(new Ray(entity.transform.position, Vector3.down), out hit, 0.5f, layerMask))
                         {
                             // Stop
-#if DEBUG
-                            Interface.Oxide.LogWarning($"Landing, current pos = {entity.transform.position}");
-#endif
+                            if (Instance.configData.debug) Interface.Oxide.LogWarning($"Landing, current pos = {entity.transform.position}");
                             islanding = false;
                             engineon = false;
                             if (pilotslist.Contains(player.userID))
                             {
-#if DEBUG
-                                Interface.Oxide.LogWarning("Landed!");
-#endif
+                                if (Instance.configData.debug) Interface.Oxide.LogWarning("Landed!");
                                 pilotslist.Remove(player.userID);
                             }
                         }
@@ -1236,7 +1212,7 @@ namespace Oxide.Plugins
                     }
 
                     // Maintain minimum height
-                    if (Physics.Raycast(entity.transform.position, entity.transform.TransformDirection(Vector3.down), out hit, minaltitude, layerMask))
+                    if (Physics.Raycast(entity.transform.position, entity.transform.TransformDirection(Vector3.down), out hit, minaltitude, layerMask) && !zmTrigger)
                     {
                         entity.transform.localPosition += transform.up * minaltitude * Time.deltaTime * 2;
                         ServerMgr.Instance.StartCoroutine(RefreshTrain());
@@ -1245,17 +1221,20 @@ namespace Oxide.Plugins
                     // Disallow flying forward into buildings, etc.
                     if (Physics.Raycast(entity.transform.position, entity.transform.TransformDirection(Vector3.forward), out hit, 10f, buildingMask))
                     {
-                        entity.transform.localPosition += transform.forward * -5f * Time.deltaTime;
-                        moveforward = false;
-
-                        var d = Math.Round(hit.distance, 2).ToString();
-                        //Instance.DoLog($"FRONTAL CRASH (distance {d}m)!", true);
+                        if (!zmTrigger)
+                        {
+                            entity.transform.localPosition += transform.forward * -5f * Time.deltaTime;
+                            moveforward = false;
+                        }
                     }
                     // Disallow flying backward into buildings, etc.
                     else if (Physics.Raycast(new Ray(entity.transform.position, Vector3.forward * -1f), out hit, 10f, buildingMask))
                     {
-                        entity.transform.localPosition += transform.forward * 5f * Time.deltaTime;
-                        movebackward = false;
+                        if (!zmTrigger)
+                        {
+                            entity.transform.localPosition += transform.forward * 5f * Time.deltaTime;
+                            movebackward = false;
+                        }
                     }
 
                     float rotspeed = 0.1f;
