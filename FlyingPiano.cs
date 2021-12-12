@@ -34,9 +34,8 @@ using Newtonsoft.Json;
 
 namespace Oxide.Plugins
 {
-    [Info("FlyingPiano", "RFC1920", "1.0.4")]
+    [Info("FlyingPiano", "RFC1920", "1.0.5")]
     [Description("Fly a piano!")]
-    // Thanks to Colon Blow for his fine work on GyroCopter, upon which this was originally based.
     internal class FlyingPiano : RustPlugin
     {
         #region Load
@@ -1199,7 +1198,7 @@ namespace Oxide.Plugins
                             // Slow down
                             entity.transform.localPosition += transform.up * -1f * Time.deltaTime;
                         }
-                        if (Physics.Raycast(new Ray(entity.transform.position, Vector3.down), out hit, 0.5f, layerMask))
+                        if (Physics.Raycast(new Ray(entity.transform.position, Vector3.down), out hit, 0.5f, layerMask) && hit.collider?.name != "ZoneManager")
                         {
                             // Stop
                             if (Instance.configData.debug) Interface.Oxide.LogWarning($"Landing, current pos = {entity.transform.position}");
